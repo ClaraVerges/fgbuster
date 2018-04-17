@@ -1,10 +1,43 @@
 """ Component separation with many different setups
 
 """
+import sys
 import numpy as np
 import healpy as hp
+import pylab as pl
 from .algebra import multi_comp_sep, comp_sep
 from .mixingmatrix import MixingMatrix
+
+def segmentation_threshold(chi):
+    extreme = np.max(np.abs(chi))
+    STEP = 0.01
+    levels = np.arange(STEP, extreme+STEP, STEP)
+    levels = np.concatenate((-levels[::-1], levels))
+    ids = np.digitize(chi, levels)
+    empty_ids = np.bincount(ids) == 0
+    for i in range(ids.max()+1):
+        ids[ids == i] = i - sum(empty_ids[:i])
+    print 'EQ NSIDE', (ids.max() / 12.)**0.5
+    return ids
+
+def comp_sep_smart_multipatch(components, instrument, data, method='threshold'):
+    prewhiten_factors = _get_prewhiten_factors(instrument, data.shape)
+    A_ev, A_dB_ev, comp_of_param, x0, params = _A_evaluators(
+        components, instrument, prewhiten_factors=prewhiten_factors)
+    prewhitened_data = prewhiten_factors * data.T
+    res = comp_sep(A_ev, prewhitened_data, None, A_dB_ev, comp_of_param, x0,
+                   options=dict(disp=True))
+    segmentation_map = res.chi_dB[0].sum(1)
+    segmentation = getattr(sys.modules[__name__], 'segmentation_%s'%method)
+    
+    patch_ids = segmentation(segmentation_map)
+    res = multi_comp_sep(A_ev, prewhitened_data, None, A_dB_ev, comp_of_param,
+                         patch_ids, x0, options=dict(disp=True))
+
+    # Launch component separation
+    res.params = params
+    res.s = res.s.T
+    return res
 
 def basic_comp_sep(components, instrument, data, nside=0):
     """ Basic component separation
